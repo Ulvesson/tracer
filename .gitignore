@@ -1,0 +1,39 @@
+# Build directories
+out/
+build/
+cmake-build-*/
+[Bb]in/
+[Oo]bj/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+_deps/
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.vcxproj
+*.vcxproj.filters
+*.sln
+
+# Trace output files
+*.json
+!CMakePresets.json
+
+# Compiled binaries
+*.exe
+*.out
+*.app
+*.o
+*.obj
+
+# OS files
+.DS_Store
+Thumbs.db
