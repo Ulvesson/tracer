@@ -4,9 +4,7 @@
 #pragma once
 
 #include <chrono>
-#include <fstream>
 #include <mutex>
-#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -33,68 +31,26 @@ public:
 	using clock = std::chrono::high_resolution_clock;
 	using TimePoint = clock::time_point;
 
-	static ChromeTracer& instance()
-	{
-		static ChromeTracer s_instance;
-		return s_instance;
-	}
+	static ChromeTracer& instance();
 
 	// Call once at program start
-	void beginSession(const std::string& filepath = "trace.json")
-	{
-		std::lock_guard<std::mutex> lock(m_mutex);
-		m_filepath = filepath;
-		m_events.clear();
-		m_startTime = clock::now();
-		m_active = true;
-	}
+	void beginSession(const std::string& filepath = "trace.json");
 
 	// Call once at program end — writes the JSON file
-	void endSession()
-	{
-		std::lock_guard<std::mutex> lock(m_mutex);
-		if (!m_active)
-			return;
-		m_active = false;
-		writeToFile();
-	}
+	void endSession();
 
 	// Record a complete duration event (phase 'X')
 	void addDurationEvent(const std::string& name,
 		const std::string& category,
 		TimePoint start,
-		TimePoint end)
-	{
-		using us = std::chrono::duration<double, std::micro>;
-		TraceEvent ev;
-		ev.name = name;
-		ev.category = category;
-		ev.phase = 'X';
-		ev.timestampUs = std::chrono::duration_cast<us>(start - m_startTime).count();
-		ev.durationUs = std::chrono::duration_cast<us>(end - start).count();
-		ev.threadId = std::this_thread::get_id();
-
-		std::lock_guard<std::mutex> lock(m_mutex);
-		if (m_active)
-			m_events.push_back(std::move(ev));
-	}
+		TimePoint end);
 
 	// Record a begin ('B') or end ('E') event for manual pairing
-	void addBeginEvent(const std::string& name, const std::string& category)
-	{
-		addPhaseEvent(name, category, 'B');
-	}
-
-	void addEndEvent(const std::string& name, const std::string& category)
-	{
-		addPhaseEvent(name, category, 'E');
-	}
+	void addBeginEvent(const std::string& name, const std::string& category);
+	void addEndEvent(const std::string& name, const std::string& category);
 
 	// Record an instant event ('I')
-	void addInstantEvent(const std::string& name, const std::string& category)
-	{
-		addPhaseEvent(name, category, 'I');
-	}
+	void addInstantEvent(const std::string& name, const std::string& category);
 
 	// Static accessor for current time
 	static TimePoint now() { return clock::now(); }
@@ -103,58 +59,15 @@ private:
 	using time_point = clock::time_point;
 
 	ChromeTracer() = default;
-	~ChromeTracer() { endSession(); }
+	~ChromeTracer();
 	ChromeTracer(const ChromeTracer&) = delete;
 	ChromeTracer& operator=(const ChromeTracer&) = delete;
 
 	void addPhaseEvent(const std::string& name,
 		const std::string& category,
-		char phase)
-	{
-		using us = std::chrono::duration<double, std::micro>;
-		TraceEvent ev;
-		ev.name = name;
-		ev.category = category;
-		ev.phase = phase;
-		ev.timestampUs = std::chrono::duration_cast<us>(clock::now() - m_startTime).count();
-		ev.durationUs = 0.0;
-		ev.threadId = std::this_thread::get_id();
+		char phase);
 
-		std::lock_guard<std::mutex> lock(m_mutex);
-		if (m_active)
-			m_events.push_back(std::move(ev));
-	}
-
-	void writeToFile() const
-	{
-		std::ofstream ofs(m_filepath);
-		ofs << "{\"traceEvents\":[";
-
-		for (size_t i = 0; i < m_events.size(); ++i)
-		{
-			const auto& ev = m_events[i];
-			if (i > 0)
-				ofs << ",";
-
-			// Thread id → numeric
-			std::ostringstream tidStream;
-			tidStream << ev.threadId;
-
-			ofs << "{\"name\":\"" << ev.name
-				<< "\",\"cat\":\"" << ev.category
-				<< "\",\"ph\":\"" << ev.phase
-				<< "\",\"ts\":" << ev.timestampUs
-				<< ",\"pid\":0"
-				<< ",\"tid\":" << tidStream.str();
-
-			if (ev.phase == 'X')
-				ofs << ",\"dur\":" << ev.durationUs;
-
-			ofs << "}";
-		}
-
-		ofs << "]}";
-	}
+	void writeToFile() const;
 
 	std::mutex m_mutex;
 	std::vector<TraceEvent> m_events;
@@ -170,16 +83,8 @@ private:
 class ScopeTrace
 {
 public:
-	ScopeTrace(const std::string& name, const std::string& category = "function")
-		: m_name(name), m_category(category), m_start(ChromeTracer::now())
-	{
-	}
-
-	~ScopeTrace()
-	{
-		ChromeTracer::instance().addDurationEvent(
-			m_name, m_category, m_start, ChromeTracer::now());
-	}
+	ScopeTrace(const std::string& name, const std::string& category = "function");
+	~ScopeTrace();
 
 	ScopeTrace(const ScopeTrace&) = delete;
 	ScopeTrace& operator=(const ScopeTrace&) = delete;

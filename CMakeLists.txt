@@ -23,7 +23,7 @@ if (NOT TRACER_ENABLED)
 endif()
 
 # Demo executable
-add_executable (tracer "tracer.cpp" "tracer.h")
+add_executable (tracer "test.cpp" "tracer.cpp" "tracer.h")
 target_link_libraries (tracer PRIVATE tracer_lib)
 
 if (CMAKE_VERSION VERSION_GREATER 3.12)

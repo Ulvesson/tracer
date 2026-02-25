@@ -1,93 +1,130 @@
-﻿// tracer.cpp : Defines the entry point for the application.
-//
-
 #include "tracer.h"
+#include <fstream>
+#include <sstream>
 
-#include <cmath>
-#include <iostream>
-#include <thread>
-#include <vector>
-
-// --- Example workloads to demonstrate tracing ---
-
-void simulateWork(const std::string& label, int ms)
+ChromeTracer& ChromeTracer::instance()
 {
-	TRACE_SCOPE(label);
-	std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+	static ChromeTracer s_instance;
+	return s_instance;
 }
 
-void loadAssets()
+ChromeTracer::~ChromeTracer()
 {
-	TRACE_FUNCTION();
-	simulateWork("LoadTextures", 30);
-	simulateWork("LoadMeshes", 50);
-	simulateWork("LoadShaders", 20);
+	endSession();
 }
 
-void computePhysics()
+void ChromeTracer::beginSession(const std::string& filepath)
 {
-	TRACE_FUNCTION();
-
-	TRACE_BEGIN("BroadPhase", "physics");
-	std::this_thread::sleep_for(std::chrono::milliseconds(15));
-	TRACE_END("BroadPhase", "physics");
-
-	TRACE_BEGIN("NarrowPhase", "physics");
-	std::this_thread::sleep_for(std::chrono::milliseconds(25));
-	TRACE_END("NarrowPhase", "physics");
+	std::lock_guard<std::mutex> lock(m_mutex);
+	m_filepath = filepath;
+	m_events.clear();
+	m_startTime = clock::now();
+	m_active = true;
 }
 
-double heavyMath(int iterations)
+void ChromeTracer::endSession()
 {
-	TRACE_FUNCTION();
-	double result = 0.0;
-	for (int i = 1; i <= iterations; ++i)
-		result += std::sin(static_cast<double>(i)) * std::cos(static_cast<double>(i));
-	return result;
+	std::lock_guard<std::mutex> lock(m_mutex);
+	if (!m_active)
+		return;
+	m_active = false;
+	writeToFile();
 }
 
-void workerThread(int id)
+void ChromeTracer::addDurationEvent(const std::string& name,
+	const std::string& category,
+	TimePoint start,
+	TimePoint end)
 {
-	std::string name = "Worker_" + std::to_string(id);
-	TRACE_SCOPE(name);
+	using us = std::chrono::duration<double, std::micro>;
+	TraceEvent ev;
+	ev.name = name;
+	ev.category = category;
+	ev.phase = 'X';
+	ev.timestampUs = std::chrono::duration_cast<us>(start - m_startTime).count();
+	ev.durationUs = std::chrono::duration_cast<us>(end - start).count();
+	ev.threadId = std::this_thread::get_id();
 
-	simulateWork(name + "_TaskA", 20 + id * 10);
-	heavyMath(500'000);
-	simulateWork(name + "_TaskB", 10 + id * 5);
+	std::lock_guard<std::mutex> lock(m_mutex);
+	if (m_active)
+		m_events.push_back(std::move(ev));
 }
 
-int main()
+void ChromeTracer::addBeginEvent(const std::string& name, const std::string& category)
 {
-	// Start the tracing session — all events go to this file
-	ChromeTracer::instance().beginSession("trace.json");
+	addPhaseEvent(name, category, 'B');
+}
 
+void ChromeTracer::addEndEvent(const std::string& name, const std::string& category)
+{
+	addPhaseEvent(name, category, 'E');
+}
+
+void ChromeTracer::addInstantEvent(const std::string& name, const std::string& category)
+{
+	addPhaseEvent(name, category, 'I');
+}
+
+void ChromeTracer::addPhaseEvent(const std::string& name,
+	const std::string& category,
+	char phase)
+{
+	using us = std::chrono::duration<double, std::micro>;
+	TraceEvent ev;
+	ev.name = name;
+	ev.category = category;
+	ev.phase = phase;
+	ev.timestampUs = std::chrono::duration_cast<us>(clock::now() - m_startTime).count();
+	ev.durationUs = 0.0;
+	ev.threadId = std::this_thread::get_id();
+
+	std::lock_guard<std::mutex> lock(m_mutex);
+	if (m_active)
+		m_events.push_back(std::move(ev));
+}
+
+void ChromeTracer::writeToFile() const
+{
+	std::ofstream ofs(m_filepath);
+	ofs << "{\"traceEvents\":[";
+
+	for (size_t i = 0; i < m_events.size(); ++i)
 	{
-		TRACE_SCOPE("Main");
+		const auto& ev = m_events[i];
+		if (i > 0)
+			ofs << ",";
 
-		TRACE_INSTANT("AppStart", "lifecycle");
+		// Thread id → numeric
+		std::ostringstream tidStream;
+		tidStream << ev.threadId;
 
-		// Single-threaded work
-		loadAssets();
-		computePhysics();
+		ofs << "{\"name\":\"" << ev.name
+			<< "\",\"cat\":\"" << ev.category
+			<< "\",\"ph\":\"" << ev.phase
+			<< "\",\"ts\":" << ev.timestampUs
+			<< ",\"pid\":0"
+			<< ",\"tid\":" << tidStream.str();
 
-		// Multi-threaded work — each thread appears as its own row in the timeline
-		{
-			TRACE_SCOPE("ParallelSection");
-			std::vector<std::thread> threads;
-			for (int i = 0; i < 4; ++i)
-				threads.emplace_back(workerThread, i);
-			for (auto& t : threads)
-				t.join();
-		}
+		if (ev.phase == 'X')
+			ofs << ",\"dur\":" << ev.durationUs;
 
-		TRACE_INSTANT("AppEnd", "lifecycle");
+		ofs << "}";
 	}
 
-	// Flush all events to trace.json
-	ChromeTracer::instance().endSession();
+	ofs << "]}";
+}
 
-	std::cout << "Trace written to trace.json\n"
-		<< "Open chrome://tracing or https://ui.perfetto.dev and load the file.\n";
+// ============================================================================
+// ScopeTrace implementation
+// ============================================================================
 
-	return 0;
+ScopeTrace::ScopeTrace(const std::string& name, const std::string& category)
+	: m_name(name), m_category(category), m_start(ChromeTracer::now())
+{
+}
+
+ScopeTrace::~ScopeTrace()
+{
+	ChromeTracer::instance().addDurationEvent(
+		m_name, m_category, m_start, ChromeTracer::now());
 }
