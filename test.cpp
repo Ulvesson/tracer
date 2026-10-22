@@ -62,6 +62,7 @@ int main()
 		TRACE_SCOPE("Main");
 
 		TRACE_INSTANT("AppStart", "lifecycle");
+		TRACE_INSTANT_SCOPE("FrameBoundary", "render", 'g');
 
 		// Single-threaded work
 		loadAssets();

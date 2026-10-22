@@ -18,9 +18,10 @@ struct TraceEvent
 {
 	std::string name;
 	std::string category;
-	char phase;                          // 'B' = begin, 'E' = end, 'X' = complete, 'I' = instant
+	char phase;                          // 'B' = begin, 'E' = end, 'X' = complete, 'i' = instant
+	char scope{'t'};                     // instant scope: 't' = thread, 'p' = process, 'g' = global
 	double timestampUs;                  // microseconds since session start
-	double durationUs;                   // only used for 'X' (complete) events
+	double durationUs{0.0};                   // only used for 'X' (complete) events
 	std::thread::id threadId;
 };
 
@@ -49,8 +50,8 @@ public:
 	void addBeginEvent(const std::string& name, const std::string& category);
 	void addEndEvent(const std::string& name, const std::string& category);
 
-	// Record an instant event ('I')
-	void addInstantEvent(const std::string& name, const std::string& category);
+	// Record an instant event ('i'). Scope: 't' = thread, 'p' = process, 'g' = global.
+	void addInstantEvent(const std::string& name, const std::string& category, char scope = 't');
 
 	// Static accessor for current time
 	static TimePoint now() { return clock::now(); }
@@ -103,9 +104,11 @@ private:
 
 #define TRACE_FUNCTION()       ScopeTrace _trace_##__LINE__(__FUNCTION__)
 #define TRACE_SCOPE(name)      ScopeTrace _trace_##__LINE__((name))
+#define TRACE_SCOPE_CAT(name, cat)      ScopeTrace _trace_##__LINE__((name), (cat))
 #define TRACE_BEGIN(name, cat)  ChromeTracer::instance().addBeginEvent((name), (cat))
 #define TRACE_END(name, cat)   ChromeTracer::instance().addEndEvent((name), (cat))
 #define TRACE_INSTANT(name, cat) ChromeTracer::instance().addInstantEvent((name), (cat))
+#define TRACE_INSTANT_SCOPE(name, cat, scope) ChromeTracer::instance().addInstantEvent((name), (cat), (scope))
 
 #else
 
@@ -114,5 +117,6 @@ private:
 #define TRACE_BEGIN(name, cat)  ((void)0)
 #define TRACE_END(name, cat)   ((void)0)
 #define TRACE_INSTANT(name, cat) ((void)0)
+#define TRACE_INSTANT_SCOPE(name, cat, scope) ((void)0)
 
 #endif

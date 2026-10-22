@@ -60,9 +60,22 @@ void ChromeTracer::addEndEvent(const std::string& name, const std::string& categ
 	addPhaseEvent(name, category, 'E');
 }
 
-void ChromeTracer::addInstantEvent(const std::string& name, const std::string& category)
+void ChromeTracer::addInstantEvent(const std::string& name, const std::string& category, char scope)
 {
-	addPhaseEvent(name, category, 'I');
+	TraceEvent ev;
+	ev.name = name;
+	ev.category = category;
+	ev.phase = 'i';
+	ev.scope = (scope == 'p' || scope == 'g') ? scope : 't';
+
+	using us = std::chrono::duration<double, std::micro>;
+	ev.timestampUs = std::chrono::duration_cast<us>(clock::now() - m_startTime).count();
+	ev.durationUs = 0.0;
+	ev.threadId = std::this_thread::get_id();
+
+	std::lock_guard<std::mutex> lock(m_mutex);
+	if (m_active)
+		m_events.push_back(std::move(ev));
 }
 
 void ChromeTracer::addPhaseEvent(const std::string& name,
@@ -104,6 +117,9 @@ void ChromeTracer::writeToFile() const
 			<< "\",\"ts\":" << ev.timestampUs
 			<< ",\"pid\":0"
 			<< ",\"tid\":" << tidStream.str();
+
+		if (ev.phase == 'i')
+			ofs << ",\"s\":\"" << ev.scope << "\"";
 
 		if (ev.phase == 'X')
 			ofs << ",\"dur\":" << ev.durationUs;
