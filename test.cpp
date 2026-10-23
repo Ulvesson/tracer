@@ -68,6 +68,11 @@ int main()
 		loadAssets();
 		computePhysics();
 
+		auto completeStart = ChromeTracer::now();
+		heavyMath(250'000);
+		auto completeEnd = ChromeTracer::now();
+		TRACE_COMPLETE("HeavyMath_CompleteEvent", "compute", completeStart, completeEnd);
+
 		// Multi-threaded work — each thread appears as its own row in the timeline
 		{
 			TRACE_SCOPE("ParallelSection");
