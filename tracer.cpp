@@ -1,5 +1,8 @@
 #include "tracer.h"
+#include <cmath>
+#include <cstdlib>
 #include <fstream>
+#include <iomanip>
 #include <sstream>
 
 ChromeTracer& ChromeTracer::instance()
@@ -78,6 +81,16 @@ void ChromeTracer::addInstantEvent(const std::string& name, const std::string& c
 		m_events.push_back(std::move(ev));
 }
 
+void ChromeTracer::addArg(const std::string& name, const std::string& value)
+{
+	std::lock_guard<std::mutex> lock(m_mutex);
+	if (!m_events.empty())
+	{
+		TraceEvent& ev = m_events.back();
+		ev.args.push_back(std::make_pair(name, value));
+	}
+}
+
 void ChromeTracer::addPhaseEvent(const std::string& name,
 	const std::string& category,
 	char phase)
@@ -98,7 +111,43 @@ void ChromeTracer::addPhaseEvent(const std::string& name,
 
 void ChromeTracer::writeToFile() const
 {
+	const auto escapeJsonString = [](const std::string& text) {
+		std::string escaped;
+		escaped.reserve(text.size());
+		for (char ch : text)
+		{
+			switch (ch)
+			{
+			case '\\': escaped += "\\\\"; break;
+			case '"': escaped += "\\\""; break;
+			case '\n': escaped += "\\n"; break;
+			case '\r': escaped += "\\r"; break;
+			case '\t': escaped += "\\t"; break;
+			default: escaped += ch; break;
+			}
+		}
+		return escaped;
+	};
+
+	const auto serializeArgValue = [&escapeJsonString](const std::string& value) {
+		char* endPtr = nullptr;
+		const double parsed = std::strtod(value.c_str(), &endPtr);
+		const bool isNumber = endPtr != value.c_str()
+			&& *endPtr == '\0'
+			&& std::isfinite(parsed);
+
+		if (isNumber)
+		{
+			std::ostringstream numStream;
+			numStream << std::defaultfloat << parsed;
+			return numStream.str();
+		}
+
+		return std::string("\"") + escapeJsonString(value) + "\"";
+	};
+
 	std::ofstream ofs(m_filepath);
+	ofs << std::fixed << std::setprecision(3);
 	ofs << "{\"traceEvents\":[";
 
 	for (size_t i = 0; i < m_events.size(); ++i)
@@ -111,8 +160,8 @@ void ChromeTracer::writeToFile() const
 		std::ostringstream tidStream;
 		tidStream << ev.threadId;
 
-		ofs << "{\"name\":\"" << ev.name
-			<< "\",\"cat\":\"" << ev.category
+		ofs << "{\"name\":\"" << escapeJsonString(ev.name)
+			<< "\",\"cat\":\"" << escapeJsonString(ev.category)
 			<< "\",\"ph\":\"" << ev.phase
 			<< "\",\"ts\":" << ev.timestampUs
 			<< ",\"pid\":0"
@@ -123,6 +172,21 @@ void ChromeTracer::writeToFile() const
 
 		if (ev.phase == 'X')
 			ofs << ",\"dur\":" << ev.durationUs;
+
+		if (!ev.args.empty())
+		{
+			ofs << ",\"args\":{";
+			for (size_t argIndex = 0; argIndex < ev.args.size(); ++argIndex)
+			{
+				if (argIndex > 0)
+					ofs << ",";
+
+				const auto& arg = ev.args[argIndex];
+				ofs << "\"" << escapeJsonString(arg.first) << "\":"
+					<< serializeArgValue(arg.second);
+			}
+			ofs << "}";
+		}
 
 		ofs << "}";
 	}
